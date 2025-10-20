@@ -122,29 +122,33 @@
             }
           '';
 
+          sops-operator-manifest = ''
+            apiVersion: v1
+            kind: Namespace
+            metadata:
+              name: sops-operator
+            ---
+            apiVersion: v1
+            kind: Namespace
+            metadata:
+              name: argocd
+            ---
+            apiVersion: v1
+            kind: Secret
+            metadata:
+              name: age-key
+              namespace: sops-operator
+            type: Opaque
+            data:
+              key.txt: __AGE_KEY_BASE64__
+          '';
+
           install-sops-operator-fn = ''
             install_sops_operator() {
               echo "--- Installing sops-secrets-operator ---"
-              kubectl apply -f - <<EOF
-              apiVersion: v1
-              kind: Namespace
-              metadata:
-                name: sops-operator
-              ---
-              apiVersion: v1
-              kind: Namespace
-              metadata:
-                name: argocd
-              ---
-              apiVersion: v1
-              kind: Secret
-              metadata:
-                name: age-key
-                namespace: sops-operator
-              type: Opaque
-              data:
-                key.txt: $(base64 -w 0 < key.txt)
-EOF
+              local age_key_base64
+              age_key_base64=$(base64 -w 0 < key.txt)
+              echo '${sops-operator-manifest}' | sed "s|__AGE_KEY_BASE64__|''${age_key_base64}|" | kubectl apply -f -
               kubectl apply -f manifests/infra/sops-secrets-operator
               kubectl rollout status -n sops-operator deployment sops-sops-secrets-operator
               echo "✓ sops-secrets-operator installed."
