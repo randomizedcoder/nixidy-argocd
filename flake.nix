@@ -80,7 +80,6 @@
       apps = forEachSystem (
         system: pkgs:
         let
-          # === Script Definitions ===
 
           build-yamls-fn = ''
             build_yamls() {
@@ -89,20 +88,20 @@
               local target_env="''${1:-all}"
 
               # Available environments
-              local available_envs="${builtins.concatStringsSep " " environments}"
+              read -r -a available_envs <<< "${builtins.concatStringsSep " " environments}"
 
               if [ "$target_env" = "all" ]; then
                 # Build all environments
-                for env in $available_envs; do
-                  echo "Generating App manifests for $env..."
-                  nixidy switch .#$env
-                  echo "Generating App of Apps for $env..."
-                  nixidy bootstrap .#$env > manifests/$env/bootstrap.yaml
+                for env in "''${available_envs[@]}"; do
+                  echo "Generating App manifests for \"$env\"..."
+                  nixidy switch .#"$env"
+                  echo "Generating App of Apps for \"$env\"..."
+                  nixidy bootstrap .#"$env" > "manifests/$env/bootstrap.yaml"
                 done
               else
                 # Check if the specified environment exists
                 local env_found=false
-                for env in $available_envs; do
+                for env in "''${available_envs[@]}"; do
                   if [ "$env" = "$target_env" ]; then
                     env_found=true
                     break
@@ -110,13 +109,13 @@
                 done
 
                 if [ "$env_found" = "true" ]; then
-                  echo "Generating App manifests for $target_env..."
-                  nixidy switch .#$target_env
-                  echo "Generating App of Apps for $target_env..."
-                  nixidy bootstrap .#$target_env > manifests/$target_env/bootstrap.yaml
+                  echo "Generating App manifests for \"$target_env\"..."
+                  nixidy switch .#"$target_env"
+                  echo "Generating App of Apps for \"$target_env\"..."
+                  nixidy bootstrap .#"$target_env" > "manifests/$target_env/bootstrap.yaml"
                 else
                   echo "Error: Environment '$target_env' not found."
-                  echo "Available environments: $available_envs"
+                  echo "Available environments: ''${available_envs[*]}"
                   exit 1
                 fi
               fi
@@ -215,7 +214,7 @@ EOF
               local i
 
               for ((i=1; i<=max_retries; i++)); do
-                echo "Attempt $i: Checking if deployment $deployment exists in namespace $namespace..."
+                echo "Attempt $i: Checking if deployment \"$deployment\" exists in namespace \"$namespace\"..."
                 if kubectl get deployment -n "$namespace" "$deployment" &>/dev/null; then
                   echo "Deployment found. Checking rollout status..."
                   if kubectl rollout status -n "$namespace" deployment "$deployment"; then
@@ -223,9 +222,9 @@ EOF
                     return 0
                   fi
                 else
-                  echo "Deployment $deployment not found yet. Retrying in $retry_delay seconds..."
+                  echo "Deployment \"$deployment\" not found yet. Retrying in $retry_delay seconds..."
                 fi
-                sleep $retry_delay
+                sleep "$retry_delay"
               done
 
               echo "✗ Deployment $deployment in namespace $namespace was not ready after $((max_retries * retry_delay)) seconds."
@@ -241,41 +240,39 @@ EOF
             }
           '';
 
-          # An attribute set mapping function names to their Nix variable definitions.
-          # This structure is used by the 'check' app to find the source code of each function.
-          scriptFunctions = {
-            build_yamls = build-yamls-fn;
-            install_sops_operator = install-sops-operator-fn;
-            install_cert_manager = install-cert-manager-fn;
-            install_argocd = install-argocd-fn;
-            wait_for_kuma = wait-for-kuma-fn;
-            apply_dev_bootstrap = apply-dev-bootstrap-fn;
-          };
+          shellcheckFunctionRegistry = [
+            "build_yamls"
+            "install_sops_operator"
+            "install_cert_manager"
+            "install_argocd"
+            "wait_for_kuma"
+            "apply_dev_bootstrap"
+            "check_scripts"
+          ];
 
-          # Define the check script's body. It will check all functions in `scriptFunctions`
-          # and then check its own source code.
           check-scripts-fn = ''
             check_scripts() {
               set -e
               echo "--- Running ShellCheck on script functions ---"
 
-              # Create a temporary file for all checks.
+              # Create a temporary file for checking.
               check_file=$(mktemp)
               # Set a trap to ensure the temp file is cleaned up on exit.
               trap 'rm -f "$check_file"' EXIT
 
-              # Use a Bash associative array to hold the function bodies.
-              declare -A functions_to_check
-              ${nixpkgs.lib.concatStringsSep "\n" (
-                nixpkgs.lib.mapAttrsToList (name: body: "functions_to_check[${name}]='${body}'") scriptFunctions
-              )}
-              # Add this function itself to the list of checks.
-              functions_to_check[check_scripts]=$'${check-scripts-fn}'
+              # The list of functions to check is generated by Nix.
+              local functions_to_check=(
+                ${builtins.concatStringsSep " " shellcheckFunctionRegistry}
+              )
 
-              for name in "''${!functions_to_check[@]}"; do
+              for name in "''${functions_to_check[@]}"; do
                 echo "Checking function: $name"
+                # Use `declare -f` to get the function's body at runtime.
+                local body
+                body="$(declare -f "$name")"
+
                 echo "#!${pkgs.bash}/bin/bash" > "$check_file"
-                echo "''${functions_to_check[$name]}" >> "$check_file"
+                echo "$body" >> "$check_file"
                 shellcheck "$check_file"
               done
 
@@ -287,145 +284,74 @@ EOF
         {
           build = {
             type = "app";
-            program = toString (pkgs.writeShellApplication {
-              name = "build-yamls";
-              runtimeInputs = [ self.packages.${system}.nixidy ];
-              text = ''
-                ${build-yamls-fn}
-                build_yamls "$@"
-              '';
-            });
+            program =
+              let
+                drv = pkgs.writeShellApplication {
+                  name = "build-yamls";
+                  runtimeInputs = [ self.packages.${system}.nixidy ];
+                  text = ''
+                    ${build-yamls-fn}
+                    build_yamls "$@"
+                  '';
+                };
+              in
+              "${drv}/bin/build-yamls";
           };
 
           init = {
             type = "app";
-            program = toString (pkgs.writeShellApplication {
-              name = "init-cluster";
-              runtimeInputs = with pkgs; [ kubectl gnused gnugrep coreutils ];
-              text = ''
-                set -e
-                ${install-sops-operator-fn}
-                ${install-cert-manager-fn}
-                ${install-argocd-fn}
-                ${wait-for-kuma-fn}
-                ${apply-dev-bootstrap-fn}
+            program =
+              let
+                drv = pkgs.writeShellApplication {
+                  name = "init-cluster";
+                  runtimeInputs = with pkgs; [ kubectl gnused gnugrep coreutils ];
+                  text = ''
+                    set -e
+                    ${install-sops-operator-fn}
+                    ${install-cert-manager-fn}
+                    ${install-argocd-fn}
+                    ${wait-for-kuma-fn}
+                    ${apply-dev-bootstrap-fn}
 
-                main() {
-                  install_sops_operator
-                  install_cert_manager
-                  install_argocd
-                  wait_for_kuma
-                  apply_dev_bootstrap
-                  echo "🎉 Cluster initialization complete!"
-                }
+                    main() {
+                      install_sops_operator
+                      install_cert_manager
+                      install_argocd
+                      wait_for_kuma
+                      apply_dev_bootstrap
+                      echo "🎉 Cluster initialization complete!"
+                    }
 
-                main "$@"
-              '';
-            });
+                    main "$@"
+                  '';
+                };
+              in
+              "${drv}/bin/init-cluster";
           };
 
           check = {
             type = "app";
-            program = toString (pkgs.writeShellApplication {
-              name = "check-scripts";
-              runtimeInputs = with pkgs; [ shellcheck coreutils bash ]; # coreutils for mktemp
-              text = ''
-                # Define the function
-                ${check-scripts-fn}
-                # Execute it
-                check_scripts "$@"
-              '';
-            });
-          };
-        }
-      );
-    };
-}
-            let
-              # Create a list of all functions to check, including the check function itself.
-              allFunctionsToTest = shellcheckFunctionRegistry ++ [ "check_scripts" ];
-              # Create the shell commands to perform the checks.
-              checkCommands = nixpkgs.lib.concatStringsSep "\n" (
-                map (name: ''
-                  echo "Checking function: ${name}"
-                  check_file=$(mktemp)
-                  # Ensure cleanup happens even if shellcheck fails
-                  trap 'rm -f "$check_file"' EXIT
-                  echo "#!${pkgs.bash}/bin/bash" > "$check_file"
-                  # The function body is inlined here by Nix.
-                  echo '${builtins.getAttr name scriptFunctionsWithCheck}' >> "$check_file"
-                  shellcheck "$check_file"
-                  # Clean up the trap for the next iteration
-                  trap - EXIT
-                '') allFunctionsToTest
-              );
-            in
-            ''
-              check_scripts() {
-                set -e
-                echo "--- Running ShellCheck on script functions ---"
-                ${checkCommands}
-                echo "✓ All checks passed."
-              }
-            '';
+            program =
+              let
+                drv = pkgs.writeShellApplication {
+                  name = "check-scripts";
+                  runtimeInputs = with pkgs; [ shellcheck coreutils bash ]; # coreutils for mktemp
+                  text = ''
+                    # Define all functions in the script's scope so `declare -f` can find them.
+                    ${build-yamls-fn}
+                    ${install-sops-operator-fn}
+                    ${install-cert-manager-fn}
+                    ${install-argocd-fn}
+                    ${wait-for-kuma-fn}
+                    ${apply-dev-bootstrap-fn}
+                    ${check-scripts-fn}
 
-          # Final attribute set of functions, now including the check script itself.
-          # This is referenced inside the check-scripts-fn body.
-          scriptFunctionsWithCheck = scriptFunctions // { check_scripts = check-scripts-fn; };
-
-        in
-        {
-          build = {
-            type = "app";
-            program = toString (pkgs.writeShellApplication {
-              name = "build-yamls";
-              runtimeInputs = [ self.packages.${system}.nixidy ];
-              text = ''
-                ${build-yamls-fn}
-                build_yamls "$@"
-              '';
-            });
-          };
-
-          init = {
-            type = "app";
-            program = toString (pkgs.writeShellApplication {
-              name = "init-cluster";
-              runtimeInputs = with pkgs; [ kubectl gnused gnugrep coreutils ];
-              text = ''
-                set -e
-                ${install-sops-operator-fn}
-                ${install-cert-manager-fn}
-                ${install-argocd-fn}
-                ${wait-for-kuma-fn}
-                ${apply-dev-bootstrap-fn}
-
-                main() {
-                  install_sops_operator
-                  install_cert_manager
-                  install_argocd
-                  wait_for_kuma
-                  apply_dev_bootstrap
-                  echo "🎉 Cluster initialization complete!"
-                }
-
-                main "$@"
-              '';
-            });
-          };
-
-          check = {
-            type = "app";
-            program = toString (pkgs.writeShellApplication {
-              name = "check-scripts";
-              runtimeInputs = with pkgs; [ shellcheck coreutils bash ]; # coreutils for mktemp
-              text = ''
-                # Define the function
-                ${check-scripts-fn}
-                # Execute it
-                check_scripts "$@"
-              '';
-            });
+                    # Execute the main check function.
+                    check_scripts "$@"
+                  '';
+                };
+              in
+              "${drv}/bin/check-scripts";
           };
         }
       );
