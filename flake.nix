@@ -133,7 +133,7 @@
                 ''
                   #!${pkgs.bash}/bin/bash
                   set -e
-                  ${pkgs.toybox}/bin/echo "Installing sops-secrets-operator on cluster"
+                  echo "Installing sops-secrets-operator on cluster"
 
                   # Create namespace and secret
                   ${pkgs.kubectl}/bin/kubectl apply -f - <<EOF
@@ -160,7 +160,7 @@
                   ${pkgs.kubectl}/bin/kubectl apply -f manifests/infra/sops-secrets-operator
                   ${pkgs.kubectl}/bin/kubectl rollout status -n sops-operator deployment sops-sops-secrets-operator
 
-                  ${pkgs.toybox}/bin/echo "Installing Cert Manager"
+                  echo "Installing Cert Manager"
                   ${pkgs.kubectl}/bin/kubectl apply -f manifests/infra/k8s-gw-api-crds
 
                   cm_max_retries=5
@@ -169,35 +169,35 @@
                   issuer_retry_delay=5
 
                   for ((i=1; i<=cm_max_retries; i++)); do
-                      ${pkgs.toybox}/bin/echo "Attempt $i: Applying cert-manager manifests..."
+                      echo "Attempt $i: Applying cert-manager manifests..."
                       if ${pkgs.kubectl}/bin/kubectl apply -f manifests/infra/cert-manager; then
-                          ${pkgs.toybox}/bin/echo "Cert-manager applied successfully. Checking ClusterIssuer 'lab-k8s-ca-issuer' readiness..."
+                          echo "Cert-manager applied successfully. Checking ClusterIssuer 'lab-k8s-ca-issuer' readiness..."
 
                           for ((j=1; j<=issuer_max_retries; j++)); do
-                              ${pkgs.toybox}/bin/echo "Attempt $j: Checking if ClusterIssuer 'lab-k8s-ca-issuer' is ready..."
+                              echo "Attempt $j: Checking if ClusterIssuer 'lab-k8s-ca-issuer' is ready..."
                               if ${pkgs.kubectl}/bin/kubectl get clusterissuer lab-k8s-ca-issuer -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null | grep -q "True"; then
-                                  ${pkgs.toybox}/bin/echo "ClusterIssuer 'lab-k8s-ca-issuer' is ready!"
+                                  echo "ClusterIssuer 'lab-k8s-ca-issuer' is ready!"
                                   break 2 # Break both loops
                               else
-                                  ${pkgs.toybox}/bin/echo "ClusterIssuer 'lab-k8s-ca-issuer' not ready yet. Retrying in $issuer_retry_delay seconds..."
+                                  echo "ClusterIssuer 'lab-k8s-ca-issuer' not ready yet. Retrying in $issuer_retry_delay seconds..."
                               fi
                               sleep $issuer_retry_delay
                           done
 
-                          ${pkgs.toybox}/bin/echo "ClusterIssuer 'lab-k8s-ca-issuer' was not ready after $((issuer_max_retries * issuer_retry_delay)) seconds."
+                          echo "ClusterIssuer 'lab-k8s-ca-issuer' was not ready after $((issuer_max_retries * issuer_retry_delay)) seconds."
                           exit 1
                       else
-                          ${pkgs.toybox}/bin/echo "Failed to apply cert-manager, retrying in $cm_retry_delay seconds..."
+                          echo "Failed to apply cert-manager, retrying in $cm_retry_delay seconds..."
                       fi
                       sleep $cm_retry_delay
                   done
 
                   if (( i > cm_max_retries )); then
-                      ${pkgs.toybox}/bin/echo "Failed to apply cert-manager after $((cm_max_retries * cm_retry_delay)) seconds."
+                      echo "Failed to apply cert-manager after $((cm_max_retries * cm_retry_delay)) seconds."
                       exit 1
                   fi
 
-                  ${pkgs.toybox}/bin/echo "Installing ArgoCD on cluster"
+                  echo "Installing ArgoCD on cluster"
                   ${pkgs.kubectl}/bin/kubectl apply -f manifests/infra/argocd
                   ${pkgs.kubectl}/bin/kubectl rollout status -n argocd deployment argocd-server
                   ${pkgs.kubectl}/bin/kubectl apply -f manifests/infra/bootstrap.yaml
@@ -212,23 +212,23 @@
 
                   # Retry loop
                   for ((i=1; i<=max_retries; i++)); do
-                      ${pkgs.toybox}/bin/echo "Attempt $i: Checking if deployment $deployment exists in namespace $namespace..."
+                      echo "Attempt $i: Checking if deployment $deployment exists in namespace $namespace..."
                       if ${pkgs.kubectl}/bin/kubectl get deployment -n "$namespace" "$deployment" &>/dev/null; then
                           # Deployment exists, now check rollout status
-                          ${pkgs.toybox}/bin/echo "Deployment found. Checking rollout status..."
+                          echo "Deployment found. Checking rollout status..."
                           if ${pkgs.kubectl}/bin/kubectl rollout status -n "$namespace" deployment "$deployment"; then
-                              ${pkgs.toybox}/bin/echo "Deployment is ready!"
+                              echo "Deployment is ready!"
                               break
                           fi
                       else
-                          ${pkgs.toybox}/bin/echo "Deployment $deployment not found yet. Retrying in $retry_delay seconds..."
+                          echo "Deployment $deployment not found yet. Retrying in $retry_delay seconds..."
                       fi
                       sleep $retry_delay
                   done
 
                   # If the loop finishes without success
                   if (( i > max_retries )); then
-                      ${pkgs.toybox}/bin/echo "Deployment $deployment in namespace $namespace was not ready after $((max_retries * retry_delay)) seconds."
+                      echo "Deployment $deployment in namespace $namespace was not ready after $((max_retries * retry_delay)) seconds."
                       exit 1
                   fi
                   ${pkgs.kubectl}/bin/kubectl apply -f manifests/dev/bootstrap.yaml
